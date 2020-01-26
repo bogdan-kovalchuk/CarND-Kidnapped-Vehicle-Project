@@ -20,6 +20,9 @@
 
 using std::string;
 using std::vector;
+using std::normal_distribution;
+
+std::default_random_engine generator;
 
 void ParticleFilter::init(double x, double y, double theta, double std[]) {
   /**
@@ -30,8 +33,25 @@ void ParticleFilter::init(double x, double y, double theta, double std[]) {
    * NOTE: Consult particle_filter.h for more information about this method 
    *   (and others in this file).
    */
-  num_particles = 0;  // TODO: Set the number of particles
+  if (!(this->is_initialized)) {
+      num_particles = 100;  // number of particles
 
+      normal_distribution<double> dis_x(x,std[0]);
+      normal_distribution<double> dis_y(y,std[1]);
+      normal_distribution<double> dis_theta(theta,std[2]);
+
+      for (auto i = 0; i < num_particles; ++i) {
+          Particle pr;
+          pr.id = i;
+          pr.x = dis_x(generator);
+          pr.y = dis_y(generator);
+          pr.theta = dis_theta(generator);
+          pr.weight = 1;
+          particles.emplace_back(pr);
+      }
+
+      this->is_initialized = true;
+  }
 }
 
 void ParticleFilter::prediction(double delta_t, double std_pos[], 
@@ -43,7 +63,15 @@ void ParticleFilter::prediction(double delta_t, double std_pos[],
    *  http://en.cppreference.com/w/cpp/numeric/random/normal_distribution
    *  http://www.cplusplus.com/reference/random/default_random_engine/
    */
+    normal_distribution<double> dis_x(0,std_pos[0]);
+    normal_distribution<double> dis_y(0,std_pos[1]);
+    normal_distribution<double> dis_theta(0,std_pos[2]);
 
+  for (auto& pr : particles) {
+      pr.x += velocity/yaw_rate * (sin(pr.theta + yaw_rate * delta_t) - sin(pr.theta)) + dis_x(generator);
+      pr.y += velocity/yaw_rate * (cos(pr.theta) - cos(pr.theta + yaw_rate * delta_t)) + dis_y(generator);
+      pr.theta += yaw_rate * delta_t + dis_theta(generator);
+  }
 }
 
 void ParticleFilter::dataAssociation(vector<LandmarkObs> predicted, 
@@ -56,7 +84,18 @@ void ParticleFilter::dataAssociation(vector<LandmarkObs> predicted,
    *   probably find it useful to implement this method and use it as a helper 
    *   during the updateWeights phase.
    */
-
+  for (auto& observ : observations) {
+      double min_dist = 100000000;
+      int pred_id = 0;
+      for (const auto& pred : predicted) {
+         auto dx = pred.x - observ.x;
+         auto dy = pred.y - observ.y;
+         auto dist = dx * dx + dy * dy;
+         pred_id = dist < min_dist? pred.id : pred_id;
+         min_dist = std::min(min_dist, dist);
+      }
+      observ.id = pred_id;
+  }
 }
 
 void ParticleFilter::updateWeights(double sensor_range, double std_landmark[], 
