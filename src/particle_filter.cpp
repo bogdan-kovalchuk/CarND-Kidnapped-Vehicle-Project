@@ -21,6 +21,7 @@
 using std::string;
 using std::vector;
 using std::normal_distribution;
+using std::discrete_distribution;
 
 std::default_random_engine generator;
 
@@ -114,7 +115,42 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
    *   and the following is a good resource for the actual equation to implement
    *   (look at equation 3.33) http://planning.cs.uiuc.edu/node99.html
    */
+    for (auto & particle : particles) {
 
+        vector<LandmarkObs> observations_in_map_coords;
+        for (const auto& observ : observations) {
+            double x_map = observ.x + cos(particle.theta) * observ.x - sin(particle.theta) * observ.y;
+            double y_map = observ.y + sin(particle.theta) * observ.x + cos(particle.theta) * observ.y;
+            observations_in_map_coords.emplace_back(LandmarkObs{observ.id, x_map, y_map});
+        }
+
+        vector<LandmarkObs> predicted;
+        for (const auto& landmark : map_landmarks.landmark_list) {
+            if ((fabs(particle.x - landmark.x_f) < sensor_range) &&
+                (fabs(particle.y - landmark.y_f) < sensor_range)) {
+                predicted.emplace_back(LandmarkObs{landmark.id_i, landmark.y_f, landmark.y_f});
+            }
+        }
+
+        dataAssociation(predicted, observations_in_map_coords);
+
+        particle.weight = 1.0;
+        for (const auto& observ : observations_in_map_coords) {
+            if(observ.id > -1) {
+                LandmarkObs landmark = predicted[observ.id];
+                // calculate normalization term
+                double gauss_norm = 1 / (2 * M_PI * std_landmark[0] * std_landmark[1]);
+                // calculate exponent
+                double exponent = (pow(observ.x - landmark.x, 2) / (2 * pow(std_landmark[0], 2)))
+                                + (pow(observ.y - landmark.y, 2) / (2 * pow(std_landmark[1], 2)));
+                // calculate weight using normalization terms and exponent
+                particle.weight *= gauss_norm * exp(-exponent);
+            }
+            else {
+                particle.weight *= std::numeric_limits<double>::min();
+            }
+        }
+    }
 }
 
 void ParticleFilter::resample() {
@@ -124,7 +160,14 @@ void ParticleFilter::resample() {
    * NOTE: You may find std::discrete_distribution helpful here.
    *   http://en.cppreference.com/w/cpp/numeric/random/discrete_distribution
    */
-
+    discrete_distribution<> dis_distr(weights.begin(), weights.end());
+    vector<Particle> resampled_particles;
+    for(auto i = 0; i < num_particles; ++i)
+    {
+        auto idx = dis_distr(generator);
+        resampled_particles.push_back(particles[idx]);
+    }
+    particles = resampled_particles;
 }
 
 void ParticleFilter::SetAssociations(Particle& particle, 
