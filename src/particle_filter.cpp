@@ -6,12 +6,9 @@
  */
 
 #include "particle_filter.h"
-
 #include <math.h>
 #include <algorithm>
-#include <iostream>
 #include <iterator>
-#include <numeric>
 #include <random>
 #include <string>
 #include <vector>
@@ -22,8 +19,11 @@ using std::string;
 using std::vector;
 using std::normal_distribution;
 using std::discrete_distribution;
+using std::uniform_int_distribution;
 
 std::default_random_engine generator;
+
+const double YAW_RATE_THRESHOLD = 0.00001;
 
 void ParticleFilter::init(double x, double y, double theta, double std[]) {
   /**
@@ -34,7 +34,7 @@ void ParticleFilter::init(double x, double y, double theta, double std[]) {
    * NOTE: Consult particle_filter.h for more information about this method 
    *   (and others in this file).
    */
-  if (!(this->is_initialized)) {
+  if (!this->is_initialized) {
       num_particles = 100;  // number of particles
 
       normal_distribution<double> dis_x(x,std[0]);
@@ -68,11 +68,18 @@ void ParticleFilter::prediction(double delta_t, double std_pos[],
     normal_distribution<double> dis_y(0,std_pos[1]);
     normal_distribution<double> dis_theta(0,std_pos[2]);
 
-  for (auto& pr : particles) {
-      pr.x += velocity/yaw_rate * (sin(pr.theta + yaw_rate * delta_t) - sin(pr.theta)) + dis_x(generator);
-      pr.y += velocity/yaw_rate * (cos(pr.theta) - cos(pr.theta + yaw_rate * delta_t)) + dis_y(generator);
-      pr.theta += yaw_rate * delta_t + dis_theta(generator);
-  }
+    for (auto& pr : particles) {
+        if(abs(yaw_rate) > YAW_RATE_THRESHOLD) {
+            pr.x += velocity / yaw_rate * (sin(pr.theta + yaw_rate * delta_t) - sin(pr.theta)) + dis_x(generator);
+            pr.y += velocity / yaw_rate * (cos(pr.theta) - cos(pr.theta + yaw_rate * delta_t)) + dis_y(generator);
+            pr.theta += yaw_rate * delta_t + dis_theta(generator);
+        }
+        else {
+            pr.x += velocity * delta_t * cos(pr.theta) + dis_x(generator);
+            pr.y += velocity * delta_t * sin(pr.theta) + dis_y(generator);
+            pr.theta += dis_theta(generator);
+        }
+    }
 }
 
 void ParticleFilter::dataAssociation(vector<LandmarkObs> predicted, 
@@ -119,16 +126,16 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
 
         vector<LandmarkObs> observations_in_map_coords;
         for (const auto& observ : observations) {
-            double x_map = observ.x + cos(particle.theta) * observ.x - sin(particle.theta) * observ.y;
-            double y_map = observ.y + sin(particle.theta) * observ.x + cos(particle.theta) * observ.y;
+            double x_map = particle.x + cos(particle.theta) * observ.x - sin(particle.theta) * observ.y;
+            double y_map = particle.y + sin(particle.theta) * observ.x + cos(particle.theta) * observ.y;
             observations_in_map_coords.emplace_back(LandmarkObs{observ.id, x_map, y_map});
         }
 
         vector<LandmarkObs> predicted;
         for (const auto& landmark : map_landmarks.landmark_list) {
-            if ((fabs(particle.x - landmark.x_f) < sensor_range) &&
-                (fabs(particle.y - landmark.y_f) < sensor_range)) {
-                predicted.emplace_back(LandmarkObs{landmark.id_i, landmark.y_f, landmark.y_f});
+            if ((fabs(particle.x - landmark.x_f) <= sensor_range) &&
+                (fabs(particle.y - landmark.y_f) <= sensor_range)) {
+                predicted.emplace_back(LandmarkObs{landmark.id_i, landmark.x_f, landmark.y_f});
             }
         }
 
@@ -137,7 +144,10 @@ void ParticleFilter::updateWeights(double sensor_range, double std_landmark[],
         particle.weight = 1.0;
         for (const auto& observ : observations_in_map_coords) {
             if(observ.id > -1) {
-                LandmarkObs landmark = predicted[observ.id];
+                LandmarkObs landmark = {};
+                for (const auto& pred : predicted) {
+                    if (pred.id == observ.id) {landmark = pred; break;}
+                }
                 // calculate normalization term
                 double gauss_norm = 1 / (2 * M_PI * std_landmark[0] * std_landmark[1]);
                 // calculate exponent
@@ -160,12 +170,17 @@ void ParticleFilter::resample() {
    * NOTE: You may find std::discrete_distribution helpful here.
    *   http://en.cppreference.com/w/cpp/numeric/random/discrete_distribution
    */
-    discrete_distribution<> dis_distr(weights.begin(), weights.end());
     vector<Particle> resampled_particles;
-    for(auto i = 0; i < num_particles; ++i)
-    {
-        auto idx = dis_distr(generator);
-        resampled_particles.push_back(particles[idx]);
+
+    weights.clear();
+
+    for(const auto& particle : particles){weights.emplace_back(particle.weight);}
+
+    discrete_distribution<> part_dist_idx(weights.begin(), weights.end());
+
+    for(auto i = 0; i < num_particles; ++i) {
+        auto idx = part_dist_idx(generator);
+        resampled_particles.emplace_back(particles[idx]);
     }
     particles = resampled_particles;
 }
